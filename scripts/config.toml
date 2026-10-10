@@ -101,6 +101,14 @@ keywords = ["devops", "kubernetes", "docker", "cloud", "infrastructure", "terraf
 title = "Security and privacy"
 keywords = ["security", "privacy", "cryptography", "encryption", "authentication", "oauth", "pentesting", "vulnerability*", "password*", "infosec"]
 
+[topics.accessibility]
+title = "Accessibility"
+keywords = [
+  "accessibility", "a11y", "wcag", "aria", "screen-reader",
+  "screenreader", "assistive-technology", "web-accessibility",
+  "keyboard-accessibility",
+]
+
 [topics.mobile]
 title = "Mobile and desktop apps"
 keywords = ["android", "ios", "mobile", "flutter", "react-native", "desktop", "electron", "tauri", "macos", "windows", "linux-desktop", "gtk", "qt"]
