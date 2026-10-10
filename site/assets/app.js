@@ -231,6 +231,7 @@
     if (policy.cla) badge(badges, "CLA");
     if (policy.dco) badge(badges, "DCO sign-off");
     if (issue.closed_pr) badge(badges, "Earlier PR closed", issue.url);
+    if (issue.maintainer_replied === true) badge(badges, "Maintainer replied");
     if (!badges.children.length) badges.remove();
 
     return node;

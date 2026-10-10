@@ -270,7 +270,7 @@ def build_repo_query(repos: list[str], labels: list[str], per_repo: int, include
            filterBy: {{labels: {label_list}}}) {{
       nodes {{
         number title url createdAt updatedAt locked
-        comments(last: 1) {{ totalCount nodes {{ createdAt body }} }}
+        comments(last: 1) {{ totalCount nodes {{ createdAt body authorAssociation }} }}
         assignees {{ totalCount }}
         labels(first: 10) {{ nodes {{ name color }} }}
         timelineItems(itemTypes: [CONNECTED_EVENT, CROSS_REFERENCED_EVENT], last: 20) {{
@@ -321,6 +321,15 @@ def recently_claimed(issue: dict[str, Any], claimed_since: dt.datetime) -> bool:
         return False
     body = QUOTED_REPLY.sub("", latest.get("body") or "")
     return bool(CLAIM_PATTERN.search(body))
+
+
+MAINTAINER_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+
+def maintainer_replied(issue: dict[str, Any]) -> bool:
+    """Whether the latest fetched comment belongs to a maintainer-associated author."""
+    nodes = (issue.get("comments") or {}).get("nodes") or []
+    return bool(nodes and nodes[-1] and nodes[-1].get("authorAssociation") in MAINTAINER_ASSOCIATIONS)
 
 
 def issue_is_available(
@@ -478,6 +487,7 @@ def fetch(github: GitHub, config: dict[str, Any], *, force: bool = False) -> dic
                         "created": issue["createdAt"][:10],
                         "updated": issue["updatedAt"][:10],
                         "comments": issue["comments"]["totalCount"],
+                        "maintainer_replied": maintainer_replied(issue),
                         "closed_pr": "CLOSED" in linked_pr_states(issue),
                     }
                 )

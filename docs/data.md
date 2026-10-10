@@ -45,11 +45,18 @@ It is refreshed twice a day. The same data, without the website extras, is commi
       "created": "2026-08-01",
       "updated": "2026-09-10",
       "comments": 2,
+      "maintainer_replied": true,                  // latest fetched comment has a maintainer association
       "closed_pr": false                         // a pull request for it was closed without merging
     }
   ]
 }
 ```
+
+`maintainer_replied` is a boolean hint based on the **latest fetched issue comment**. It is
+`true` when that comment's GitHub `authorAssociation` is `OWNER`, `MEMBER`, or
+`COLLABORATOR`. A `false` value means no maintainer-associated latest comment was
+detected; it does not establish that a maintainer never replied earlier. Older datasets
+may omit the field. The hint does not guarantee a future response.
 
 ## Example: five newest beginner issues in Go
 

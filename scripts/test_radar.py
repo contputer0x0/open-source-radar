@@ -7,6 +7,7 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import ClassVar
+from unittest.mock import patch
 
 import radar
 
@@ -224,12 +225,121 @@ class SafetyTests(unittest.TestCase):
 
 
 class QueryTests(unittest.TestCase):
+    def test_new_field_is_queried(self):
+        query = radar.build_repo_query(["owner/repo"], ["help wanted"], 5, include_policy=False)
+        self.assertIn("nodes { createdAt body authorAssociation }", query)
+        self.assertEqual(query.count("comments(last: 1)"), 1)
+        self.assertIn("rateLimit { cost remaining resetAt }", query)
+
     def test_query_quotes_names_and_labels(self):
         query = radar.build_repo_query(['own"er/na"me'], ['good "first"'], 5, include_policy=True)
         self.assertIn('owner: "own\\"er"', query)
         self.assertIn('"good \\"first\\""', query)
         self.assertIn('expression: "HEAD:AGENTS.md"', query)
         self.assertNotIn("p0:", radar.build_repo_query(["a/b"], ["x"], 5, include_policy=False))
+
+
+class MaintainerReplyTests(unittest.TestCase):
+    def test_association_allowlist(self):
+        for association in ("OWNER", "MEMBER", "COLLABORATOR"):
+            with self.subTest(association=association):
+                self.assertIs(
+                    radar.maintainer_replied(
+                        {"comments": {"nodes": [comment("Thanks", authorAssociation=association)]}}
+                    ),
+                    True,
+                )
+        for association in ("CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "NONE", "MANNEQUIN", "OTHER", None):
+            with self.subTest(association=association):
+                self.assertIs(
+                    radar.maintainer_replied(
+                        {"comments": {"nodes": [comment("Thanks", authorAssociation=association)]}}
+                    ),
+                    False,
+                )
+
+    def test_absent_comments_and_latest_only(self):
+        for comments in (None, {}, {"nodes": []}, {"nodes": [None]}):
+            with self.subTest(comments=comments):
+                self.assertIs(radar.maintainer_replied({"comments": comments}), False)
+        maintainer = comment("Reviewed", authorAssociation="OWNER")
+        outsider = comment("Any updates?", authorAssociation="NONE")
+        self.assertIs(radar.maintainer_replied({"comments": {"nodes": [maintainer, outsider]}}), False)
+        self.assertIs(radar.maintainer_replied({"comments": {"nodes": [outsider, maintainer]}}), True)
+
+    def test_fetch_writes_boolean_for_each_retained_issue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repos_path = root / "repos.json"
+            policies_path = root / "policies.json"
+            issues_path = root / "issues.json"
+            repos_path.write_text(json.dumps({"repos": {"owner/repo": {"language": "Python"}}}), encoding="utf-8")
+            common = {
+                "title": "Example",
+                "url": "https://github.com/owner/repo/issues/1",
+                "createdAt": "2026-10-01T00:00:00Z",
+                "updatedAt": "2026-10-09T00:00:00Z",
+                "locked": False,
+                "assignees": {"totalCount": 0},
+                "labels": {"nodes": [{"name": "good first issue"}]},
+                "timelineItems": {"nodes": []},
+            }
+            true_issue = {
+                **common,
+                "number": 1,
+                "comments": {"totalCount": 1, "nodes": [comment("Reviewed", authorAssociation="COLLABORATOR")]},
+            }
+            false_issue = {
+                **common,
+                "number": 2,
+                "comments": {"totalCount": 2, "nodes": [comment("Any update?", authorAssociation="NONE")]},
+            }
+            repo = {
+                "nameWithOwner": "owner/repo",
+                "url": "https://github.com/owner/repo",
+                "description": "Example",
+                "stargazerCount": 50,
+                "forkCount": 1,
+                "isArchived": False,
+                "pushedAt": "2026-10-08T00:00:00Z",
+                "primaryLanguage": {"name": "Python"},
+                "licenseInfo": {"spdxId": "MIT"},
+                "repositoryTopics": {"nodes": []},
+                "issues": {"nodes": [true_issue, false_issue]},
+            }
+
+            class FakeGitHub:
+                def graphql(self, query):
+                    self.last_query = query
+                    return {"data": {"r0": repo, "rateLimit": {"cost": 1, "remaining": 4000}}}
+
+            github = FakeGitHub()
+            config = {
+                "issues": {
+                    "updated_within_days": 180,
+                    "claim_within_days": 21,
+                    "per_repo": 5,
+                    "labels": ["good first issue"],
+                },
+                "policy": {"refresh_days": 7},
+                "topics": {},
+                "safety": {"min_ratio": 0.5},
+                "exclude": {"repositories": []},
+            }
+            fixed_now = dt.datetime(2026, 10, 10, tzinfo=dt.UTC)
+            with (
+                patch.multiple(radar, REPOS_PATH=repos_path, POLICY_PATH=policies_path, ISSUES_PATH=issues_path),
+                patch.object(radar, "now_utc", return_value=fixed_now),
+            ):
+                payload = radar.fetch(github, config, force=True)
+            by_number = {item["number"]: item for item in payload["issues"]}
+            self.assertEqual(set(by_number), {1, 2})
+            self.assertIs(by_number[1]["maintainer_replied"], True)
+            self.assertIs(by_number[2]["maintainer_replied"], False)
+            self.assertEqual([by_number[1]["comments"], by_number[2]["comments"]], [1, 2])
+            self.assertEqual(len(payload["repositories"]), 1)
+            self.assertEqual(json.loads(issues_path.read_text(encoding="utf-8")), payload)
+            self.assertIn("authorAssociation", github.last_query)
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -324,6 +434,7 @@ class RenderSmokeTests(unittest.TestCase):
                                 "title": "Fix the fixture",
                                 "url": "https://github.com/owner/repo/issues/1",
                                 "comments": 0,
+                                "maintainer_replied": True,
                                 "created": "2026-09-27",
                                 "updated": "2026-09-27",
                             },
@@ -333,6 +444,7 @@ class RenderSmokeTests(unittest.TestCase):
                                 "title": "Refactor the parser",
                                 "url": "https://github.com/owner/go-repo/issues/2",
                                 "comments": 0,
+                                "maintainer_replied": False,
                                 "created": "2026-09-26",
                                 "updated": "2026-09-26",
                             },
@@ -365,6 +477,7 @@ class RenderSmokeTests(unittest.TestCase):
             self.assertEqual(
                 [issue["title"] for issue in site_data["issues"]], ["Fix the fixture", "Refactor the parser"]
             )
+            self.assertEqual([item["maintainer_replied"] for item in site_data["issues"]], [True, False])
             # Go has no beginner issues, so its (empty) feed is not linked from the site.
             self.assertEqual(site_data["language_slugs"], {"Python": "python"})
 
